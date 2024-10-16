@@ -82,7 +82,8 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 
   managed_policy_arns = [
-    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
   ]
 }
 
@@ -171,6 +172,7 @@ resource "aws_ecs_task_definition" "redis_slave" {
 
   execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn      = aws_iam_role.ecs_task_role.arn
+
   container_definitions = jsonencode([{
     name      = "redis-slave"
     image     = var.slave_image
@@ -207,10 +209,13 @@ resource "aws_ecs_task_definition" "redis_slave" {
       name = "REDIS_REPLICATION_MODE", value = "slave"
       },
       {
-        name = "REDIS_MASTER_HOST", value = aws_service_discovery_service.redis_master_service.name
+        name = "REDIS_MASTER_HOST", value = local.redis_master_dns_name
+      },
+      {
+        name = "REDIS_PORT", value = "6379"
     }]
 
-    command = ["redis-server", "--replicaof", "$REDIS_MASTER_HOST", "6379"]
+    #command = ["redis-server", "--replicaof", "$REDIS_MASTER_HOST", "6379"]
   }])
 
   volume {
@@ -225,7 +230,7 @@ resource "aws_ecs_service" "redis_master" {
   name            = "redis-master-service"
   cluster         = var.cluster_name
   task_definition = aws_ecs_task_definition.redis_master.arn
-  desired_count   = 1
+  desired_count   = 0
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = [var.subnet_public_1, var.subnet_public_2]
@@ -233,16 +238,19 @@ resource "aws_ecs_service" "redis_master" {
     assign_public_ip = true
   }
 
+  enable_execute_command = true
   service_registries {
     registry_arn = aws_service_discovery_service.redis_master_service.arn
   }
+
+  depends_on = [aws_service_discovery_service.redis_master_service]
 }
 
 resource "aws_ecs_service" "redis_slave" {
   name            = "redis-slave-service"
   cluster         = var.cluster_name
   task_definition = aws_ecs_task_definition.redis_slave.arn
-  desired_count   = 2
+  desired_count   = 0
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = [var.subnet_public_1, var.subnet_public_2]
@@ -250,9 +258,13 @@ resource "aws_ecs_service" "redis_slave" {
     assign_public_ip = true
   }
 
+  enable_execute_command = true
+
   service_registries {
     registry_arn = aws_service_discovery_service.redis_slave_service.arn
   }
+
+  depends_on = [aws_service_discovery_service.redis_slave_service]
 }
 
 resource "aws_security_group" "redis_sg" {
@@ -272,6 +284,12 @@ resource "aws_security_group" "redis_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+# constructing the full dns name
+
+locals {
+  redis_master_dns_name = "${aws_service_discovery_service.redis_master_service.name}.${aws_service_discovery_private_dns_namespace.redis_namespace.name}"
 }
 
 resource "aws_service_discovery_private_dns_namespace" "redis_namespace" {
