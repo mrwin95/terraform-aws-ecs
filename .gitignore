@@ -1,0 +1,9 @@
+redis/iac/.terraform
+redis/iac/.terraform.lock.hcl
+redis/iac/terraform.tfstate
+redis/iac/terraform.tfstate.backup
+redis/iac/terraform.tfvars
+prometheous/iac/.terraform
+prometheous/iac/.terraform.lock.hcl
+prometheous/iac/terraform.tfstate
+prometheous/iac/terraform.tfvars
