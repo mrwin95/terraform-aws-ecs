@@ -209,6 +209,8 @@ resource "aws_ecs_task_definition" "redis_slave" {
       {
         name = "REDIS_MASTER_HOST", value = aws_service_discovery_service.redis_master_service.name
     }]
+
+    command = ["redis-server", "--replicaof", "$REDIS_MASTER_HOST", "6379"]
   }])
 
   volume {
