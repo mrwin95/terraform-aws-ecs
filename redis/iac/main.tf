@@ -230,7 +230,7 @@ resource "aws_ecs_service" "redis_master" {
   name            = "redis-master-service"
   cluster         = var.cluster_name
   task_definition = aws_ecs_task_definition.redis_master.arn
-  desired_count   = 0
+  desired_count   = 1
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = [var.subnet_public_1, var.subnet_public_2]
@@ -250,7 +250,7 @@ resource "aws_ecs_service" "redis_slave" {
   name            = "redis-slave-service"
   cluster         = var.cluster_name
   task_definition = aws_ecs_task_definition.redis_slave.arn
-  desired_count   = 0
+  desired_count   = 2
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = [var.subnet_public_1, var.subnet_public_2]
