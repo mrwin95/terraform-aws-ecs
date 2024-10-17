@@ -3,7 +3,7 @@ provider "aws" {
 }
 
 #task execution role
-resource "aws_iam_role" "ecs_task_execution_role" {
+resource "aws_iam_role" "ecs_task_execution_pro_role" {
   name = "ecsTaskExecutionRoleForPrometheus"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -39,17 +39,54 @@ resource "aws_iam_policy" "ec2_discovery_policy" {
   })
 }
 
+resource "aws_iam_policy" "remote_container_policy" {
+  name        = "ContainerRemotePolicy"
+  description = "IAM policy for Prometheus container remote"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:ExecuteCommand",
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:GetLogEvents",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # attacth to role
 
 resource "aws_iam_role_policy_attachment" "attach_ec2_discovery_policy" {
-  role       = aws_iam_role.ecs_task_execution_role.name
+  role       = aws_iam_role.ecs_task_execution_pro_role.name
   policy_arn = aws_iam_policy.ec2_discovery_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "attach_remote_container_policy" {
+  role       = aws_iam_role.ecs_task_execution_pro_role.name
+  policy_arn = aws_iam_policy.remote_container_policy.arn
 }
 
 resource "aws_iam_policy_attachment" "ecs_task_execution_policy" {
   name       = "ecs_task_execution_policy"
-  roles      = [aws_iam_role.ecs_task_execution_role.name]
+  roles      = [aws_iam_role.ecs_task_execution_pro_role.name]
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_policy_attachment" "ecs_ssm_policy" {
+  name       = "ecs_ssm_policy"
+  roles      = [aws_iam_role.ecs_task_execution_pro_role.name]
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # cloudwatch logs
@@ -65,12 +102,13 @@ resource "aws_ecs_task_definition" "prometheus" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = 512
   memory                   = 1024
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-  task_role_arn            = aws_iam_role.ecs_task_execution_role.arn
+
+  execution_role_arn = aws_iam_role.ecs_task_execution_pro_role.arn
+  task_role_arn      = aws_iam_role.ecs_task_execution_pro_role.arn
   container_definitions = jsonencode([
     {
       name      = "prometheus"
-      image     = "792248914698.dkr.ecr.ap-northeast-2.amazonaws.com/prometheus-ec2-monitoring:latest"
+      image     = var.prometheus_image
       cpu       = 512
       memory    = 1024
       essential = true
@@ -99,7 +137,8 @@ resource "aws_ecs_task_definition" "prometheus" {
         }
       }
     }
-  ])
+    ]
+  )
 }
 
 # target group
@@ -158,19 +197,24 @@ resource "aws_ecs_service" "prometheus_service" {
   name            = "prometheus-service"
   cluster         = aws_ecs_cluster.prometheus_cluster.id
   task_definition = aws_ecs_task_definition.prometheus.arn
-  desired_count   = 1
+  desired_count   = var.prometheus_desired_count
 
   network_configuration {
-    subnets          = ["subnet-019691260a5d00bcb", "subnet-03c19946c9dac7a74"]
+    subnets          = toset(var.private_subnets)
     security_groups  = [aws_security_group.prometheus_sg.id]
     assign_public_ip = false
   }
+
+
+  enable_execute_command = true
 
   launch_type = "FARGATE"
 
   service_registries {
     registry_arn = aws_service_discovery_service.prometheus_service.arn
   }
+
+  depends_on = [aws_service_discovery_service.prometheus_service]
 }
 
 resource "aws_ecs_cluster" "prometheus_cluster" {
@@ -196,7 +240,7 @@ resource "aws_ecs_task_definition" "grafana_task" {
   container_definitions = jsonencode([
     {
       name      = "grafana"
-      image     = "792248914698.dkr.ecr.ap-northeast-2.amazonaws.com/grafana:latest"
+      image     = var.grafana_image
       cpu       = 512
       memory    = 1024
       essential = true
@@ -212,7 +256,7 @@ resource "aws_ecs_task_definition" "grafana_task" {
       environment = [
         {
           name  = "GF_SECURITY_ADMIN_PASSWORD"
-          value = "Thang@123"
+          value = var.grafana_password
         }
       ]
 
@@ -234,8 +278,8 @@ resource "aws_ecs_task_definition" "grafana_task" {
     }
   ])
 
-  execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
-  task_role_arn      = aws_iam_role.ecs_task_execution_role.arn
+  execution_role_arn = aws_iam_role.ecs_task_execution_pro_role.arn
+  task_role_arn      = aws_iam_role.ecs_task_execution_pro_role.arn
 }
 
 #grafana service
@@ -245,12 +289,16 @@ resource "aws_ecs_service" "grafana_service" {
   cluster         = aws_ecs_cluster.prometheus_cluster.id
   task_definition = aws_ecs_task_definition.grafana_task.arn
   launch_type     = "FARGATE"
-  desired_count   = 1
+  desired_count   = var.grafana_desired_count
 
   network_configuration {
-    subnets          = ["subnet-019691260a5d00bcb", "subnet-03c19946c9dac7a74"]
+    subnets          = toset(var.private_subnets)
     security_groups  = [aws_security_group.grafana_sg.id]
     assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.grafana_service.arn
   }
 
   load_balancer {
@@ -259,7 +307,7 @@ resource "aws_ecs_service" "grafana_service" {
     container_port   = 3000
   }
 
-  depends_on = [aws_lb_listener.grafana_listener]
+  depends_on = [aws_lb_listener.grafana_listener, aws_service_discovery_service.grafana_service]
 }
 
 # create a ALB
@@ -269,7 +317,7 @@ resource "aws_alb" "grafana_alb" {
   internal                   = false
   load_balancer_type         = "application"
   security_groups            = [aws_security_group.grafana_sg.id]
-  subnets                    = ["subnet-0ebb1bd6755d04c83", "subnet-0f81623dc22694d02"]
+  subnets                    = toset(var.public_subnets)
   enable_deletion_protection = false
 }
 
@@ -341,6 +389,22 @@ resource "aws_service_discovery_private_dns_namespace" "monitoring_ns" {
 # dns for prometheus
 resource "aws_service_discovery_service" "prometheus_service" {
   name = "prometheus"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.monitoring_ns.id
+    dns_records {
+      ttl  = 60
+      type = "A"
+    }
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}
+
+# dns for prometheus
+resource "aws_service_discovery_service" "grafana_service" {
+  name = "grafana"
   dns_config {
     namespace_id = aws_service_discovery_private_dns_namespace.monitoring_ns.id
     dns_records {
