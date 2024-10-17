@@ -7,3 +7,8 @@ prometheous/iac/.terraform
 prometheous/iac/.terraform.lock.hcl
 prometheous/iac/terraform.tfstate
 prometheous/iac/terraform.tfvars
+mongodb/iac/.terraform
+mongodb/iac/.terraform.lock.hcl
+mongodb/iac/terraform.tfstate
+mongodb/iac/terraform.tfstate.backup
+mongodb/iac/terraform.tfvars
