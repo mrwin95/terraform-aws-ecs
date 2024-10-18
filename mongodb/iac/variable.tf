@@ -15,3 +15,44 @@ variable "mongo_replicas" {
 variable "master_number" {
 
 }
+variable "service_name" {}
+variable "desired_count" {
+
+}
+variable "create_lb" {
+
+}
+variable "container_name" {
+
+}
+variable "container_port" {
+
+}
+
+variable "family_name" {
+
+}
+variable "memory" {
+
+}
+
+variable "volumes" {
+
+
+}
+
+variable "mount_points" {
+
+}
+
+variable "environment" {
+
+}
+
+variable "placementConstraints" {
+
+}
+
+variable "log_group_name" {
+
+}
