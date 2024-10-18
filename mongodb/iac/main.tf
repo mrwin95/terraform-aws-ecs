@@ -2,7 +2,7 @@ provider "aws" {
   region = "ap-east-1"
 }
 
-resource "aws_iam_role" "ecs_task_execution_role" {
+resource "aws_iam_role" "ecs_task_execution_mongodb_role" {
   name = "ecsTaskExecutionMongodb"
 
   assume_role_policy = jsonencode({
@@ -17,29 +17,84 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 }
 
+resource "aws_iam_policy" "ec2_discovery_policy" {
+  name        = "EC2DiscoveryMongodbPolicy"
+  description = "IAM policy for Mongodb EC2 service discovery"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeTags",
+          "ec2:DescribeRegions"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "remote_container_policy" {
+  name        = "ContainerRemoteMongodbPolicy"
+  description = "IAM policy for Prometheus container remote"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:ExecuteCommand",
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_ec2_discovery_policy" {
+  role       = aws_iam_role.ecs_task_execution_mongodb_role.name
+  policy_arn = aws_iam_policy.ec2_discovery_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "attach_remote_container_policy" {
+  role       = aws_iam_role.ecs_task_execution_mongodb_role.name
+  policy_arn = aws_iam_policy.remote_container_policy.arn
+}
+
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
-  role       = aws_iam_role.ecs_task_execution_role.name
+  role       = aws_iam_role.ecs_task_execution_mongodb_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_task_ssm_policy" {
-  role       = aws_iam_role.ecs_task_execution_role.name
+  role       = aws_iam_role.ecs_task_execution_mongodb_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_cloudwatch_log_group" "mongodb_log_group" {
+  name              = "/ecs/mongodb-logs"
+  retention_in_days = 7
 }
 
 # task definitions
 
 resource "aws_ecs_task_definition" "mongodb" {
   family                   = "mongodb-replica-set"
-  requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
   cpu                      = 1024
   memory                   = 2048
 
-  execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
-  task_role_arn      = aws_iam_role.ecs_task_execution_role.arn
-
-  container_definitions = jsonencode(flatten([
+  container_definitions = jsonencode(
+    # flatten([
     [
       #master
       {
@@ -47,12 +102,41 @@ resource "aws_ecs_task_definition" "mongodb" {
         image     = var.mongodb_image,
         essential = true
 
-        #   dependsOn = [
-        #     {
-        #       containerName = "init"
-        #       condition     = "START"
-        #     }
-        #   ]
+        portMappings = [
+          {
+            containerPort = 27017
+            hostPort      = 27017
+            protocol      = "tcp"
+          }
+        ]
+
+        healthCheck = {
+          command     = ["CMD-SHELL", "mongo --eval 'db.adminCommand(\"ping\")' || exit 1"]
+          internal    = 30
+          timeout     = 5
+          retries     = 3
+          startPeriod = 60
+        }
+
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            awslogs-group         = aws_cloudwatch_log_group.mongodb_log_group.name
+            awslogs-region        = "ap-east-1"
+            awslogs-stream-prefix = "master"
+          }
+        }
+
+        mountPoints = [{
+          sourceVolume  = "mongo_data"
+          containerPath = "/data/db"
+          readOnly      = false
+        }]
+
+        command = [
+          "sh", "-c", "sleep 10; echo 'Initializing MongoDB Replica Set...'; mongo --eval 'rs.initiate({_id:\"rs0\", members:[{_id:0, host:\"mongodb-1.mongodb.local:27017\"}, {_id:1, host:\"mongodb-2.mongodb.local:27017\"}, {_id:2, host:\"mongodb-3.mongodb.local:27017\"}]})'"
+        ]
+
         environment = [
           {
             name  = "MONGO_INITDB_ROOT_USERNAME",
@@ -68,119 +152,77 @@ resource "aws_ecs_task_definition" "mongodb" {
             value = local.mongodb_service_discovery_ns
           }
         ]
+  }])
 
-        portMappings = [
-          {
-            containerPort : 27017,
-            hostPort : 27017,
-            protocol = "tcp"
-          }
-        ]
 
-        mountPoints = [{
-          sourceVolume  = "efs-storage",
-          containerPath = "/data/db/master",
-          readOnly      = false
-        }]
+  execution_role_arn = aws_iam_role.ecs_task_execution_mongodb_role.arn
+  task_role_arn      = aws_iam_role.ecs_task_execution_mongodb_role.arn
 
-        healthCheck = {
-          command     = ["CMD-SHELL", "mongo --eval 'db.adminCommand(\"ping\")' || exit 1"]
-          internal    = 30
-          timeout     = 5
-          retries     = 3
-          startPeriod = 60
-        }
+  # }],
 
-        logConfiguration = {
-          logDriver = "awslogs"
-          options = {
-            awslogs-group         = aws_cloudwatch_log_group.mongodb_logs.name
-            awslogs-region        = "ap-east-1"
-            awslogs-stream-prefix = "mongodb"
-          }
-        }
-    }],
+  #slaves
+  # [for i in range(var.mongo_replicas) : {
 
-    #slaves
-    [for i in range(var.mongo_replicas) : {
+  #   name      = "mongodb-slave-${i + 1}",
+  #   image     = var.mongodb_image,
+  #   essential = true
 
-      name      = "mongodb-slave-${i + 1}",
-      image     = var.mongodb_image,
-      essential = true
+  #   environment = [
+  #     {
+  #       name  = "MONGO_INITDB_ROOT_USERNAME",
+  #       value = var.mongodb_root_admin
+  #       }, {
+  #       name  = "MONGO_INITDB_ROOT_PASSWORD",
+  #       value = var.mongodb_root_pass
+  #       }, {
+  #       name  = "REPLICA_SET_NAME",
+  #       value = var.replica_set_name
+  #       }, {
+  #       name  = "SERVICE_DISCOVERY_NAMESPACE",
+  #       value = local.mongodb_service_discovery_ns
+  #     }
+  #   ]
 
-      #   dependsOn = [
-      #     {
-      #       containerName = "init"
-      #       condition     = "START"
-      #     }
-      #   ]
-      environment = [
-        {
-          name  = "MONGO_INITDB_ROOT_USERNAME",
-          value = var.mongodb_root_admin
-          }, {
-          name  = "MONGO_INITDB_ROOT_PASSWORD",
-          value = var.mongodb_root_pass
-          }, {
-          name  = "REPLICA_SET_NAME",
-          value = var.replica_set_name
-          }, {
-          name  = "SERVICE_DISCOVERY_NAMESPACE",
-          value = local.mongodb_service_discovery_ns
-        }
-      ]
+  #   portMappings = [
+  #     {
+  #       containerPort : 27018 + i,
+  #       hostPort : 27018 + i,
+  #       protocol = "tcp"
+  #     }
+  #   ]
 
-      portMappings = [
-        {
-          containerPort : 27018 + i,
-          hostPort : 27018 + i,
-          protocol = "tcp"
-        }
-      ]
+  #   mountPoints = [{
+  #     sourceVolume  = "efs-storage",
+  #     containerPath = "/data/db/slave${i + 1}",
+  #     readOnly      = false
+  #   }]
 
-      mountPoints = [{
-        sourceVolume  = "efs-storage",
-        containerPath = "/data/db/slave${i + 1}",
-        readOnly      = false
-      }]
+  #   healthCheck = {
+  #     command     = ["CMD-SHELL", "mongo --eval 'db.adminCommand(\"ping\")' || exit 1"]
+  #     internal    = 30
+  #     timeout     = 5
+  #     retries     = 3
+  #     startPeriod = 60
+  #   }
 
-      healthCheck = {
-        command     = ["CMD-SHELL", "mongo --eval 'db.adminCommand(\"ping\")' || exit 1"]
-        internal    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.mongodb_logs.name
-          awslogs-region        = "ap-east-1"
-          awslogs-stream-prefix = "mongodb-slave-${i}"
-        }
-      }
-    }]
-    #   , {
-    #   name      = "init"
-    #   image     = "busybox"
-    #   command   = ["sh", "-c", "until [ ! -f /data/db/mongod.lock ]; do echo 'Waiting for MongoDB to release lock....'; sleep 5; done; echo 'Lock released.';"]
-    #   essential = true
-    # }
-
-  ]))
+  #   logConfiguration = {
+  #     logDriver = "awslogs"
+  #     options = {
+  #       awslogs-group         = aws_cloudwatch_log_group.mongodb_logs.name
+  #       awslogs-region        = "ap-east-1"
+  #       awslogs-stream-prefix = "mongodb-slave-${i}"
+  #     }
+  #   }
+  # }]
+  #   ]))
 
   volume {
-    name = "efs-storage"
+    name = "mongo_data"
     efs_volume_configuration {
       file_system_id = aws_efs_file_system.mongodb_efs.id
+      root_directory = "/"
     }
   }
-}
-
-resource "aws_cloudwatch_log_group" "mongodb_logs" {
-  name              = "/ecs/mongodb-logs"
-  retention_in_days = 7
 }
 
 # primary service
@@ -193,42 +235,43 @@ resource "aws_ecs_service" "mongodb_primary" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.private_subnets
+    subnets          = toset(var.private_subnets)
     security_groups  = [aws_security_group.mongodb_sg.id]
     assign_public_ip = false
   }
 
   enable_execute_command = true
-  service_registries {
-    registry_arn = aws_service_discovery_service.mongodb_ds.arn
-  }
+  #   service_registries {
+  #     registry_arn = aws_service_discovery_service.mongodb_master.arn
+  #   }
 
-  depends_on = [aws_service_discovery_service.mongodb_ds]
+  #   depends_on = [aws_service_discovery_service.mongodb_master]
+  depends_on = [aws_ecs_task_definition.mongodb]
 }
 
 # secondary service
 
-resource "aws_ecs_service" "mongodb_secondary" {
-  name            = "mongodb-secondary"
-  cluster         = var.cluster_name
-  task_definition = aws_ecs_task_definition.mongodb.arn
-  desired_count   = var.mongo_replicas
-  launch_type     = "FARGATE"
+# resource "aws_ecs_service" "mongodb_secondary" {
+#   name            = "mongodb-secondary"
+#   cluster         = var.cluster_name
+#   task_definition = aws_ecs_task_definition.mongodb.arn
+#   desired_count   = var.mongo_replicas
+#   launch_type     = "FARGATE"
 
-  network_configuration {
-    subnets          = var.private_subnets
-    security_groups  = [aws_security_group.mongodb_sg.id]
-    assign_public_ip = false
-  }
+#   network_configuration {
+#     subnets          = var.private_subnets
+#     security_groups  = [aws_security_group.mongodb_sg.id]
+#     assign_public_ip = false
+#   }
 
-  enable_execute_command = true
+#   enable_execute_command = true
 
-  service_registries {
-    registry_arn = aws_service_discovery_service.mongodb_ds.arn
-  }
+#   service_registries {
+#     registry_arn = aws_service_discovery_service.mongodb_ds.arn
+#   }
 
-  depends_on = [aws_service_discovery_service.mongodb_ds]
-}
+#   depends_on = [aws_service_discovery_service.mongodb_ds]
+# }
 
 # service ns
 
@@ -299,10 +342,22 @@ resource "aws_security_group" "mongodb_sg" {
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port   = 0
-    to_port     = 0
+    from_port   = 27017
+    to_port     = 27017
     protocol    = "tcp"
-    cidr_blocks = ["10.10.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -320,17 +375,32 @@ resource "aws_service_discovery_private_dns_namespace" "mongodb_ns" {
   vpc  = var.vpc_id
 }
 
-resource "aws_service_discovery_service" "mongodb_ds" {
-  name = "mongodb"
-  dns_config {
-    namespace_id = aws_service_discovery_private_dns_namespace.mongodb_ns.id
-    dns_records {
-      type = "A"
-      ttl  = 60
-    }
-  }
+# resource "aws_service_discovery_service" "mongodb_master" {
+#   name = "master"
+#   dns_config {
+#     namespace_id = aws_service_discovery_private_dns_namespace.mongodb_ns.id
+#     dns_records {
+#       type = "A"
+#       ttl  = 60
+#     }
+#   }
 
-  health_check_custom_config {
-    failure_threshold = 1
-  }
-}
+#   health_check_custom_config {
+#     failure_threshold = 1
+#   }
+# }
+
+# resource "aws_service_discovery_service" "mongodb_slave" {
+#   name = "slave"
+#   dns_config {
+#     namespace_id = aws_service_discovery_private_dns_namespace.mongodb_ns.id
+#     dns_records {
+#       type = "A"
+#       ttl  = 60
+#     }
+#   }
+
+#   health_check_custom_config {
+#     failure_threshold = 1
+#   }
+# }
