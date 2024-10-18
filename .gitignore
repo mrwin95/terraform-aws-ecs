@@ -13,3 +13,4 @@ mongodb/iac/terraform.tfstate
 mongodb/iac/terraform.tfstate.backup
 mongodb/iac/terraform.tfvars
 prometheous/iac/terraform.tfstate.backup
+prometheous/prometheus.yml

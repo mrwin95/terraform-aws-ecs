@@ -17,5 +17,50 @@ scrape_configs:
     scrape_interval: 15s
   - job_name: "node_exporter"
     static_configs:
-      - targets: ["18.163.154.219:9100"]
+      - targets: ["10.10.140.175:9100"]
     metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: "node_exporter-hkdc01"
+    static_configs:
+      - targets: ["10.10.0.10:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+  - job_name: "node_exporter-hkdc02"
+    static_configs:
+      - targets: ["10.10.32.10:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: "node_exporter-hkdb01"
+    static_configs:
+      - targets: ["10.10.0.100:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+  - job_name: "node_exporter-hkdb02"
+    static_configs:
+      - targets: ["10.10.32.100:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: "node_exporter-jpdc01"
+    static_configs:
+      - targets: ["10.100.0.10:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+  - job_name: "node_exporter-jpdc02"
+    static_configs:
+      - targets: ["10.100.32.10:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: "node_exporter-jpdb01"
+    static_configs:
+      - targets: ["10.100.0.100:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+  - job_name: "node_exporter-jpdb02"
+    static_configs:
+      - targets: ["10.100.32.100:9182"]
+    metrics_path: /metrics
+    scrape_interval: 15s

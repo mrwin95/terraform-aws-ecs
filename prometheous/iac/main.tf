@@ -291,10 +291,11 @@ resource "aws_ecs_service" "grafana_service" {
   launch_type     = "FARGATE"
   desired_count   = var.grafana_desired_count
 
+  enable_execute_command = true
   network_configuration {
     subnets          = toset(var.private_subnets)
     security_groups  = [aws_security_group.grafana_sg.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   service_registries {
@@ -307,7 +308,7 @@ resource "aws_ecs_service" "grafana_service" {
     container_port   = 3000
   }
 
-  depends_on = [aws_lb_listener.grafana_listener, aws_service_discovery_service.grafana_service]
+  depends_on = [aws_lb_listener.http_listener, aws_lb_listener.https_listener, aws_service_discovery_service.grafana_service]
 }
 
 # create a ALB
@@ -325,28 +326,38 @@ resource "aws_alb" "grafana_alb" {
 
 resource "aws_lb_target_group" "grafana_tg" {
   name     = "grafana-target-group"
-  port     = 3000
+  port     = 80
   protocol = "HTTP"
   vpc_id   = var.vpc_id
 
   health_check {
-    path                = "/"
+    path                = "/api/health"
     interval            = 30
     timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 2
     matcher             = "200-299"
+    port                = 3000
   }
 
   target_type = "ip"
   depends_on  = [aws_alb.grafana_alb]
 }
 
+# create SSL certificate in ACM
+
+# resource "aws_acm_certificate" "grafana_ssl" {
+#   domain_name       = var.domain_name
+#   validation_method = "DNS"
+#   tags = {
+#     Name = "Grafana-SSL-Certificate"
+#   }
+# }
 # listener
 
-resource "aws_lb_listener" "grafana_listener" {
+resource "aws_lb_listener" "http_listener" {
   load_balancer_arn = aws_alb.grafana_alb.arn
-  port              = 3000
+  port              = 80
   protocol          = "HTTP"
   default_action {
     type             = "forward"
@@ -354,17 +365,119 @@ resource "aws_lb_listener" "grafana_listener" {
   }
 }
 
+resource "aws_lb_listener" "https_listener" {
+  load_balancer_arn = aws_alb.grafana_alb.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = var.ssl_policy
+  certificate_arn   = var.certificate_arn
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.grafana_tg.arn
+  }
+}
+
+# DNS setup
+
+# resource "aws_route53_record" "grafana" {
+#   zone_id = var.zone_id
+#   name    = var.route53_record
+#   type    = "A"
+
+#   alias {
+#     name                   = aws_alb.grafana_alb.dns_name
+#     zone_id                = var.zone_id
+#     evaluate_target_health = true
+#   }
+# }
+
+# create rule
+
+resource "aws_lb_listener_rule" "rule80" {
+  listener_arn = aws_lb_listener.http_listener.arn
+  priority     = 100
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.grafana_tg.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.route53_record]
+    }
+  }
+
+  tags = {
+    Name = var.route53_record
+  }
+}
+
+resource "aws_lb_listener_rule" "rule443" {
+  listener_arn = aws_lb_listener.https_listener.arn
+  priority     = 100
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.grafana_tg.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.route53_record]
+    }
+  }
+
+  tags = {
+    Name = var.route53_record
+  }
+}
 # security group
+
+# resource "aws_security_group" "grafana_alb_sg" {
+#   name        = "grafana-alb-sg"
+#   description = "Security group for Grafana ALB"
+
+#   ingress = [{
+#     from_port   = 80
+#     to_port     = 80
+#     protocol    = "tcp"
+#     cidr_blocks = ["0.0.0.0/0"]
+#     }, {
+#     from_port   = 443
+#     to_port     = 443
+#     protocol    = "tcp"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }]
+
+#   egress {
+#     from_port   = 0
+#     to_port     = 0
+#     protocol    = "-1"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   vpc_id = var.vpc_id
+# }
 
 resource "aws_security_group" "grafana_sg" {
   name        = "grafana-sg"
   description = "grafana-sg"
 
   ingress {
-    from_port = 3000
-    to_port   = 3000
-    protocol  = "tcp"
-
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -374,7 +487,6 @@ resource "aws_security_group" "grafana_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
   vpc_id = var.vpc_id
 }
 

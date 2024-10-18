@@ -17,3 +17,9 @@ variable "grafana_desired_count" {
 variable "prometheus_desired_count" {
   type = number
 }
+variable "domain_name" {}
+
+variable "certificate_arn" {}
+variable "ssl_policy" {}
+variable "zone_id" {}
+variable "route53_record" {}
