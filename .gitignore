@@ -14,3 +14,14 @@ mongodb/iac/terraform.tfstate.backup
 mongodb/iac/terraform.tfvars
 prometheous/iac/terraform.tfstate.backup
 prometheous/prometheus.yml
+lab-tutorial/.terraform
+lab-tutorial/.terraform.lock.hcl
+lab-tutorial/terraform.tfstate
+lab-tutorial/terraform.tfstate.backup
+lab-tutorial/terraform.tfvars
+dc/.terraform
+dc/.terraform.lock.hcl
+dc/terraform.tfstate
+dc/terraform.tfstate.backup
+dc/terraform.tfvars
+myapp/node_modules

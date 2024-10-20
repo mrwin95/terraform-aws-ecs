@@ -15,44 +15,44 @@ variable "mongo_replicas" {
 variable "master_number" {
 
 }
-variable "service_name" {}
-variable "desired_count" {
+# variable "service_name" {}
+# variable "desired_count" {
 
-}
-variable "create_lb" {
+# }
+# variable "create_lb" {
 
-}
-variable "container_name" {
+# }
+# variable "container_name" {
 
-}
-variable "container_port" {
+# }
+# variable "container_port" {
 
-}
+# }
 
-variable "family_name" {
+# variable "family_name" {
 
-}
-variable "memory" {
+# }
+# variable "memory" {
 
-}
+# }
 
-variable "volumes" {
+# variable "volumes" {
 
 
-}
+# }
 
-variable "mount_points" {
+# variable "mount_points" {
 
-}
+# }
 
-variable "environment" {
+# variable "environment" {
 
-}
+# }
 
-variable "placementConstraints" {
+# variable "placementConstraints" {
 
-}
+# }
 
-variable "log_group_name" {
+# variable "log_group_name" {
 
-}
+# }
